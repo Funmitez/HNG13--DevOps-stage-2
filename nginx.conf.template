@@ -1,0 +1,52 @@
+events {
+    worker_connections 1024;
+}
+
+http {
+    # Logging
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+
+    # Define upstream backend servers
+    upstream backend {
+        # Blue server - primary server
+        # max_fails=1: Mark as down after 1 failed request
+        # fail_timeout=5s: Retry after 5 seconds
+        server app_blue:${PORT} max_fails=1 fail_timeout=5s;
+        
+        # Green server - backup server (only used when blue fails)
+        server app_green:${PORT} backup;
+    }
+
+    server {
+        listen 80;
+        server_name localhost;
+
+        # Proxy timeouts - keep them short for fast failover
+        proxy_connect_timeout 2s;
+        proxy_send_timeout 2s;
+        proxy_read_timeout 2s;
+        
+        # Retry on these conditions
+        proxy_next_upstream error timeout http_500 http_502 http_503 http_504;
+        proxy_next_upstream_tries 2;
+        proxy_next_upstream_timeout 3s;
+
+        location / {
+            proxy_pass http://backend;
+            proxy_http_version 1.1;
+            
+            # Important: Pass all headers from the app
+            proxy_pass_request_headers on;
+            
+            # Standard proxy headers
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # Don't buffer - pass response immediately
+            proxy_buffering off;
+        }
+    }
+}
